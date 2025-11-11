@@ -42,7 +42,7 @@ def main() -> None:
     # STEP 1: Generate borrower data
     # -----------------------------------------------------------------
     # Read borrower dataset
-    borrower_df = pd.read_csv("data/input/borrower2.csv", header=0)
+    borrower_df = pd.read_csv("data/input/borrower3.csv", header=0)
     print("\nborrower_df\n", borrower_df.shape)
 
     # STEP 2: Encode categorical features and scale all features equally
@@ -88,15 +88,15 @@ def main() -> None:
 
     # STEP 6 : Cluster borrowers
     # -----------------------------------------------------------------
-    #cluster_labels = cluster_borrowers(z_mean, n_clusters=3)
-    cluster_df = cluster_borrowers_gmm(z_mean, n_clusters=4)
+    # cluster_labels = cluster_borrowers(z_mean, n_clusters=3)
+    cluster_df = cluster_borrowers_gmm(z_mean, n_clusters=3)
 
-    #print("\ncluster_labels\n", cluster_labels)
+    # print("\ncluster_labels\n", cluster_labels)
     print("\ncluster_labels\n", cluster_df.head(5))
 
     # STEP 7 : Add the cluster label to borrower data
     # -----------------------------------------------------------------
-    #borrowers_with_clusters = add_clusters_to_borrowers(borrower_df, cluster_labels)
+    # borrowers_with_clusters = add_clusters_to_borrowers(borrower_df, cluster_labels)
 
     borrowers_with_clusters = pd.concat([borrower_df.reset_index(drop=True), cluster_df], axis=1)
 
@@ -185,20 +185,21 @@ def build_encoder(input_dim, latent_dim):
 
     # 1st dense layer
     """
-    Dense layer object with 64 output units
-    x is a KerasTensor representing the shape (batch_size, 64) 
+    Dense layer object with 512 output units
+    x is a KerasTensor representing the shape (batch_size, 512) 
     """
-    x = layers.Dense(256, activation="relu", name="encoder_l1")(encoder_input)
-
-    x = layers.Dense(128, activation="relu", name="encoder_l4")(x)
-    x = layers.Dense(64, activation="relu", name="encoder_l3")(x)
+    x = layers.Dense(512, activation="relu", name="encoder_l1")(encoder_input)
 
     # 2nd dense layer
     """
-    Dense layer object with 32 output units
-    x is a KerasTensor representing the shape (batch_size, 32) 
+    Dense layer object with 256 output units
+    x is a KerasTensor representing the shape (batch_size, 256) 
     """
-    x = layers.Dense(32, activation="relu", name="encoder_l2")(x)
+    x = layers.Dense(256, activation="relu", name="encoder_l2")(x)
+
+    x = layers.Dense(128, activation="relu", name="encoder_l3")(x)
+    x = layers.Dense(64, activation="relu", name="encoder_l4")(x)
+    x = layers.Dense(32, activation="relu", name="encoder_l5")(x)
 
     # mean and variance layer
     z_mean = layers.Dense(latent_dim, name="z_mean")(x)
@@ -219,11 +220,11 @@ def build_decoder(latent_dim, output_dim):
     x = layers.Dense(32, activation="relu", name="decoder_l1")(latent_input)
 
     # 2nd dense layer
-    x = layers.Dense(64, activation="relu", name="decoder_l3")(x)
+    x = layers.Dense(64, activation="relu", name="decoder_l2")(x)
 
-    x = layers.Dense(128, activation="relu", name="decoder_l2")(x)
-
+    x = layers.Dense(128, activation="relu", name="decoder_l3")(x)
     x = layers.Dense(256, activation="relu", name="decoder_l4")(x)
+    x = layers.Dense(512, activation="relu", name="decoder_l5")(x)
 
     # output layer
     decoder_output = layers.Dense(output_dim, activation="linear")(x)
@@ -248,10 +249,10 @@ def train_vae(x_scaled, vae, epochs, batch_size):
 
 
 def cluster_borrowers_gmm(
-    z_latent: np.ndarray,
-    n_clusters: int,
-    covariance_type: str = "full",
-    random_state: int = 42
+        z_latent: np.ndarray,
+        n_clusters: int,
+        covariance_type: str = "full",
+        random_state: int = 42
 ) -> pd.DataFrame:
     """
     Cluster borrowers using Gaussian Mixture Model (GMM)
@@ -330,7 +331,8 @@ class VAELossLayer(layers.Layer):
     The constructor (__init__) runs when you create a VariationalAutoencoder(...) object.
     **kwargs: any extra arguments passed to the parent class.
     """
-    def __init__(self, beta=0.01, **kwargs):
+
+    def __init__(self, beta=0.001, **kwargs):
         # Calls the constructor of the parent class (tf.keras.Model) so internal Keras setup happens correctly.
         # Always do this when subclassing Keras models.
         super().__init__(**kwargs)
