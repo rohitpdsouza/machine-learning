@@ -1,0 +1,15 @@
+product_type,product_sub_type,portfolio_account_type,credit_purpose_code,investor_location,business_unit
+loan,fixed rate loan,lending,home,Singapore,Lending_SG
+loan,variable rate loan,lending,airplane,Singapore,Lending_SG
+deposit,fixed rate deposit,banking,,London,Banking_LDN
+deposit,variable rate deposit,banking,,London,Banking_LDN
+FX,FX spot,execute,,Singapore,FX_Exec_SG
+FX,FX forward,execute,,Singapore,FX_Exec_SG
+FX,FX swap,engage,,London,FX_Engage_LDN
+FX,FX forward,engage,,London,FX_Engage_LDN
+loan,fixed rate loan,entrust,yacht,London,Entrust_Loan_LDN
+loan,variable rate loan,entrust,home,London,Entrust_Loan_LDN
+deposit,fixed rate deposit,entrust,,Singapore,Entrust_Dep_SG
+deposit,variable rate deposit,entrust,,Singapore,Entrust_Dep_SG
+loan,fixed rate loan,lending,airplane,Singapore,
+FX,FX swap,execute,,London,
