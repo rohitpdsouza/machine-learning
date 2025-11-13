@@ -180,6 +180,14 @@ def build_variational_autoencoder(input_dim: int, latent_dim: int):
 
 
 def build_encoder(input_dim, latent_dim):
+    """
+     Concept Check:
+     Scalar : Single number / 0D tensor (5)
+     Vector : An array of numbers / 1D tensor ([1,2,3])
+     Matrix : A grid of numbers / 2D tensor ([1,2], [3,5])
+     Tensor : scalars, vectors, and matrices to n dimensions
+    """
+
     # Symbolic tensor to define the shape of model input
     encoder_input = layers.Input(shape=(input_dim,), name="encoder_input")
 
@@ -202,6 +210,11 @@ def build_encoder(input_dim, latent_dim):
     x = layers.Dense(32, activation="relu", name="encoder_l5")(x)
 
     # mean and variance layer
+    """
+    Encoder will learn the mean and log-variance in the latent space (batch size, latent_dim) for each borrower. In 
+    variational encoder, borrower it not a point but a "gaussian cloud". Mean and log-variance will give the center 
+    and spread of the cloud in gaussian space
+    """
     z_mean = layers.Dense(latent_dim, name="z_mean")(x)
     z_log_var = layers.Dense(latent_dim, name="z_log_var")(x)
     z = Sampling()([z_mean, z_log_var])
@@ -322,7 +335,12 @@ class Sampling(layers.Layer):
 
     def call(self, inputs):
         z_mean, z_log_var = inputs
+        # epsilon is a tensor of random noise from standard distribution N(0,1)
+        # each element of the tensor will be drawn from N(0,1)
         epsilon = tf.random.normal(shape=tf.shape(z_mean))
+        # encoder generates the mean and log of the variance
+        # tf.exp(0.5 * z_log_var) will compute the standard deviation
+        # epsilon will give the random "jitter" from N(0,1)
         return z_mean + tf.exp(0.5 * z_log_var) * epsilon
 
 
@@ -348,6 +366,8 @@ class VAELossLayer(layers.Layer):
         reconstruction_loss = ops.mean(ops.square(original_inputs - reconstructed)) * ops.cast(input_dim, "float32")
 
         # Compute KL divergence loss (symbolic)
+        # KL divergence term measures how far each borrower’s encoded
+        # distribution is from the standard normal distribution
         kl_loss = -0.5 * ops.mean(1 + z_log_var - ops.square(z_mean) - ops.exp(z_log_var))
 
         # Add combined loss
