@@ -58,7 +58,7 @@ def main() -> None:
     # STEP 3: Build variational autoencoder (VAE) to compress and de-compress the input and output
     # -----------------------------------------------------------------
     input_dim = borrower_scaled.shape[1]
-    encoding_dim = 5  # latent space size
+    encoding_dim = 6  # latent space size
     print("\nNo of input features: ", input_dim, "\n")
     print("\nNo of latent features: ", encoding_dim, "\n")
     vae, encoder, decoder = build_variational_autoencoder(input_dim, encoding_dim)
@@ -113,7 +113,7 @@ def main() -> None:
     # STEP 6 : Cluster borrowers
     # -----------------------------------------------------------------
     # cluster_labels = cluster_borrowers(z_mean, n_clusters=3)
-    cluster_df = cluster_borrowers_gmm(z_mean, n_clusters=2)
+    cluster_df = cluster_borrowers_gmm(z_mean, n_clusters=3)
 
     # print("\ncluster_labels\n", cluster_labels)
     print("\ncluster_labels\n", cluster_df.head(5))
