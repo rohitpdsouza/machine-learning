@@ -72,11 +72,35 @@ def main() -> None:
     """
     The model tries to minimize the difference between input and reconstructed output and 
     automatically learns the feature weights in the process
+    
+    Every epoch:
+    1. Encoder pass
+    For input x, encoder will output:
+    z_mean -> mean of the latent distribution
+    z_log_var -> log variance of the latent distribution
+    
+    2. Sampling pass
+    Samples a probabilistic latent representation z of input using random noise from N(0,1)
+    
+    3. Decoder pass
+    z is fed to the decoder network
+    It reconstructs x_recon
+    
+    4. Compute loss
+    Reconstruction loss (x & x_recon)
+    kl_loss (how far is the latent representation z_mean & z_log i.e. encoder outputs from N(0,1)?)
+    total loss = reconstruction loss + kl_loss (with a weight)
+    
+    5. Weight updates
+    The total loss is used to update:
+    encoder weights (which it used to compute z_mean, z_log_var, this will change the values in the next epoch)
+    decoder weights (which improves reconstruction)
     """
-    epochs = 200
+    epochs = 100
     batch_size = 100
 
-    history = train_vae(borrower_scaled, vae, epochs, batch_size)
+    feature_names = x_scaled_df.columns.tolist()
+    history = train_vae(borrower_scaled, vae, epochs, batch_size, feature_names, encoder)
     print(f"VAE trained for {len(history.history['loss'])} epochs. Final loss: {history.history['loss'][-1]:.4f}")
     print("\nMetrics tracked:", history.history.keys(), "\n")
 
@@ -89,7 +113,7 @@ def main() -> None:
     # STEP 6 : Cluster borrowers
     # -----------------------------------------------------------------
     # cluster_labels = cluster_borrowers(z_mean, n_clusters=3)
-    cluster_df = cluster_borrowers_gmm(z_mean, n_clusters=3)
+    cluster_df = cluster_borrowers_gmm(z_mean, n_clusters=2)
 
     # print("\ncluster_labels\n", cluster_labels)
     print("\ncluster_labels\n", cluster_df.head(5))
@@ -115,11 +139,22 @@ def main() -> None:
 def pre_process(borrower_df: pd.DataFrame):
     # 1. one-hot encoding to encode categorical columns to numerical
     borrower_df_unencoded = borrower_df.copy()
+    # ignore some customer_id & region as they are not relevant
+    # amplify credit utilization
+    borrower_df_unencoded = borrower_df_unencoded.drop(columns=['customer_id', 'region'])
+    borrower_df_unencoded['credit_util_power'] = borrower_df_unencoded['credit_utilization'] ** 10  # non-linear effect
+    borrower_df_unencoded['credit_util_log'] = np.log1p(borrower_df_unencoded['credit_utilization'])  # if skewed
+
     borrower_df_encoded = one_hot_encoder(borrower_df_unencoded)
 
-    # 2. scale all features for equal importance
+    # 2. scale features for equal importance
     scaler = StandardScaler()
     borrower_scaled = scaler.fit_transform(borrower_df_encoded)
+
+    # Amplify credit utilization
+    features = borrower_df_encoded.columns.tolist()
+    idx = features.index('credit_utilization')
+    borrower_scaled[:, idx] *= 2
 
     return borrower_df_encoded, borrower_scaled
 
@@ -213,7 +248,11 @@ def build_encoder(input_dim, latent_dim):
     """
     Encoder will learn the mean and log-variance in the latent space (batch size, latent_dim) for each borrower. In 
     variational encoder, borrower it not a point but a "gaussian cloud". Mean and log-variance will give the center 
-    and spread of the cloud in gaussian space
+    and spread of the cloud in gaussian space.
+    
+    Note that the below is just a linear transformation. At the beginning, z_mean and z_log_var can be both very 
+    similar. They will diverge over each training step using the formula used in the VAE layer and eventually learn 
+    the 'mean' and variance of the latent output.
     """
     z_mean = layers.Dense(latent_dim, name="z_mean")(x)
     z_log_var = layers.Dense(latent_dim, name="z_log_var")(x)
@@ -247,14 +286,24 @@ def build_decoder(latent_dim, output_dim):
     return decoder
 
 
-def train_vae(x_scaled, vae, epochs, batch_size):
+def train_vae(x_scaled, vae, epochs, batch_size, feature_names, encoder):
     vae = vae
+
+    # fist encoder layer is used for weights because it is the only layer that directly connects to the initial set
+    # of raw borrower attributes
+    callback_weights = FeatureWeightPrinter(
+        encoder_model=encoder,
+        feature_names=feature_names,
+        dense_layer_name="encoder_l1",
+        top_k=10
+    )
 
     history = vae.fit(
         x_scaled,
         epochs=epochs,
         batch_size=batch_size,
         shuffle=True,
+        callbacks=[callback_weights],
         verbose=1
     )
 
@@ -350,6 +399,72 @@ class VAELossLayer(layers.Layer):
     **kwargs: any extra arguments passed to the parent class.
     """
 
+    """
+    z_log_var is the logarithm of variance 
+    σ is the standard deviation, which is derived from variance 
+    Variance : σ² = exp(z_log_var)
+    Standard deviation: σ = exp(0.5*z_log_var)
+    """
+
+    """
+    VAE concept:
+    
+    At initialization, dense layer will randomly assign weights using linear transformation. They can be (are) similar
+    
+    z_mean = 0.1
+    z_log_var = 0.1
+    variance σ² = exp(z_log_var) = e(0.1) = 1.105
+    SD σ = sqrt(1.105) = 1.05
+    
+    Sample a latent value using the mean, variance and random noise (epsilon ε)
+    random noise is sampled from standard deviation N(0,1), assume ε = 0.5
+    z = z_mean + σ * ε
+      = 0.1 + 1.05 * 0.5
+      = 0.625
+    
+    Training step1:
+    input = 10
+    reconstructed = 15
+    error = (15-10)power(2) = 25
+    
+    To reduce the reconstruction loss, neural network will push z_mean 
+    Say new z_mean = 0.8 (was initially 0.1)
+    
+    kl_loss wants to shrink towards N(0,1), pushes mean -> 0 and variance ->1
+    say updated z_log_var = -0.2 (from 0.1)
+    
+    Now:
+    z_mean = 0.8
+    z_log_var = -0.2
+    variance σ² = exp(z_log_var) = e(-0.2) = 0.818
+    SD σ = sqrt(0.818) = 0.904
+    Sampling:
+    z = z_mean + σ * ε
+    = 0.8 + 0.904 * 0.3
+    = 1.07
+    
+    Training step2:
+    input = 10
+    reconstructed = 12
+    error = 4
+    
+    To push reconstructed towards input (reduce reconstruction loss), VAE will shift z_mean
+    z_mean = 1.3 (from 0.8)
+    
+    kl_loss will push variation towards N(0,1).
+    updated z_log_var = -0.6
+    Now:
+    z_mean = 1.3
+    z_log_var = -0.6
+    variance σ² = exp(z_log_var) = e(-0.6) = 0.548
+    SD σ = sqrt(0.548) = 0.740
+    Sampling:
+    z = z_mean + σ * ε
+    = 1.3 + 0.740 * (-0.2)
+    = 1.152
+      
+    """
+
     def __init__(self, beta=0.001, **kwargs):
         # Calls the constructor of the parent class (tf.keras.Model) so internal Keras setup happens correctly.
         # Always do this when subclassing Keras models.
@@ -375,6 +490,58 @@ class VAELossLayer(layers.Layer):
 
         # Return the reconstructed tensor (for model output)
         return reconstructed
+
+
+class FeatureWeightPrinter(tf.keras.callbacks.Callback):
+    """
+    A callback that prints the learned feature weights of a specific Dense layer
+    inside the encoder after each epoch.
+
+    Parameters
+    ----------
+    encoder_model : keras.Model
+        The Keras encoder model that contains Dense layers.
+
+    feature_names : list[str]
+        List of feature names corresponding to input columns.
+
+    dense_layer_name : str
+        The name of the Dense layer whose weights should be printed.
+
+    top_k : int
+        Number of highest-magnitude feature weights to display each epoch.
+    """
+
+    def __init__(self, encoder_model, feature_names, dense_layer_name, top_k=10):
+        super().__init__()
+        self.encoder_model = encoder_model  # <--- THIS IS A MODEL OBJECT (TENSOR-BASED)
+        self.feature_names = feature_names  # <--- PLAIN PYTHON LIST
+        self.dense_layer_name = dense_layer_name  # <--- PLAIN STRING
+        self.top_k = top_k  # <--- PLAIN INTEGER
+
+    def on_epoch_end(self, epoch, logs=None):
+        """Executed automatically after every epoch."""
+
+        # ---- 1. Get the Dense layer inside the encoder ----
+        dense_layer = self.encoder_model.get_layer(self.dense_layer_name)
+
+        # ---- 2. Extract its weights ----
+        W, b = dense_layer.get_weights()
+        # W shape = (num_features, num_neurons)
+
+        # ---- 3. Use the first neuron’s weight vector (vector of size num_features) ----
+        weight_vector = W[:, 0]
+
+        # ---- 4. Pair feature names with their weights ----
+        feature_weight_pairs = list(zip(self.feature_names, weight_vector))
+
+        # ---- 5. Sort by absolute value (importance) ----
+        feature_weight_pairs.sort(key=lambda x: abs(x[1]), reverse=True)
+
+        # ---- 6. Print clean summary ----
+        print(f"\n=== Epoch {epoch + 1} — Top {self.top_k} Feature Weights ===")
+        for name, weight in feature_weight_pairs[:self.top_k]:
+            print(f"{name:30s} → {weight:+.4f}")
 
 
 if __name__ == "__main__":
