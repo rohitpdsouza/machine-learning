@@ -3,7 +3,7 @@ A variational autoencoder (VAE) is a more advanced neural network that learns no
 version, but a probability range (mean and variance) for each borrower’s features — allowing it to understand
 uncertainty and naturally group similar borrowers (e.g., low, medium, or high risk) in a smooth, continuous space.
 """
-
+import hdbscan
 import pandas as pd
 import numpy as np
 import tensorflow as tf
@@ -37,7 +37,6 @@ pd.set_option('display.width', None)
 # Main Workflow
 # ============================================
 
-
 def main() -> None:
     # STEP 1: Generate borrower data
     # -----------------------------------------------------------------
@@ -58,7 +57,7 @@ def main() -> None:
     # STEP 3: Build variational autoencoder (VAE) to compress and de-compress the input and output
     # -----------------------------------------------------------------
     input_dim = borrower_scaled.shape[1]
-    encoding_dim = 6  # latent space size
+    encoding_dim = 5  # latent space size
     print("\nNo of input features: ", input_dim, "\n")
     print("\nNo of latent features: ", encoding_dim, "\n")
     vae, encoder, decoder = build_variational_autoencoder(input_dim, encoding_dim)
@@ -96,7 +95,7 @@ def main() -> None:
     encoder weights (which it used to compute z_mean, z_log_var, this will change the values in the next epoch)
     decoder weights (which improves reconstruction)
     """
-    epochs = 100
+    epochs = 200
     batch_size = 100
 
     feature_names = x_scaled_df.columns.tolist()
@@ -106,23 +105,28 @@ def main() -> None:
 
     # STEP 6 : Get the latent representation of each borrower
     # -----------------------------------------------------------------
+    """The weights from the last epoch or the best weights in case EarlyStopping with restore_best_weights=True was 
+    used, are used to derive the latent representation of the borrowers"""
     z_mean, z_log_var, z = encoder.predict(borrower_scaled)
     print("\nLatent borrower representation (first 5):\n", z[:5])
     print("\nLatent borrower shape: ", z.shape, "\n")
 
     # STEP 6 : Cluster borrowers
     # -----------------------------------------------------------------
-    # cluster_labels = cluster_borrowers(z_mean, n_clusters=3)
-    cluster_df = cluster_borrowers_gmm(z_mean, n_clusters=3)
+    # Use KMeans to cluster the borrowers
+    # borrowers_with_clusters = cluster_borrowers_kmeans(borrower_df, z_mean, n_clusters=3)
+
+    # Use Gaussiam Mixture Model (GMM) to cluster the borrowers
+    borrowers_with_clusters = cluster_borrowers_gmm(borrower_df, z_mean, n_clusters=10)
+
+    # Use HDBSCAN to cluster the borrowers
+    # borrowers_with_clusters = cluster_borrowers_hdbscan(borrower_df, z_mean)
 
     # print("\ncluster_labels\n", cluster_labels)
-    print("\ncluster_labels\n", cluster_df.head(5))
 
     # STEP 7 : Add the cluster label to borrower data
     # -----------------------------------------------------------------
     # borrowers_with_clusters = add_clusters_to_borrowers(borrower_df, cluster_labels)
-
-    borrowers_with_clusters = pd.concat([borrower_df.reset_index(drop=True), cluster_df], axis=1)
 
     print("\nborrowers_with_clusters\n", borrowers_with_clusters.head(5))
     borrowers_with_clusters.to_excel(
@@ -139,6 +143,7 @@ def main() -> None:
 def pre_process(borrower_df: pd.DataFrame):
     # 1. one-hot encoding to encode categorical columns to numerical
     borrower_df_unencoded = borrower_df.copy()
+
     # ignore some customer_id & region as they are not relevant
     # amplify credit utilization
     borrower_df_unencoded = borrower_df_unencoded.drop(columns=['customer_id', 'region'])
@@ -310,7 +315,26 @@ def train_vae(x_scaled, vae, epochs, batch_size, feature_names, encoder):
     return history
 
 
+def cluster_borrowers_hdbscan(borrower_df, z_mean):
+    cluster = hdbscan.HDBSCAN(
+        min_cluster_size=100,  # minimum borrowers in a cluster
+        min_samples=10,  # robustness to noise
+        metric='euclidean',
+        cluster_selection_method='leaf'  # more fine-grained clusters
+    )
+
+    cluster_labels = cluster.fit_predict(z_mean)
+
+    unique_clusters, counts = np.unique(cluster_labels, return_counts=True)
+    cluster_summary = pd.DataFrame({"cluster": unique_clusters, "count": counts})
+    print("\nhdbscan cluster summary:\n", cluster_summary)
+
+    borrower_df["cluster_id"] = cluster_labels
+    return borrower_df
+
+
 def cluster_borrowers_gmm(
+        borrower_df,
         z_latent: np.ndarray,
         n_clusters: int,
         covariance_type: str = "full",
@@ -328,6 +352,8 @@ def cluster_borrowers_gmm(
 
     Returns:
         pd.DataFrame: Borrowers with GMM cluster labels and probabilities.
+        :param z_latent:
+        :param borrower_df:
     """
 
     # Step 1: Initialize GMM
@@ -359,19 +385,30 @@ def cluster_borrowers_gmm(
     print(f"📈 Average cluster confidence: {cluster_df['cluster_confidence'].mean():.3f}")
     print(f"🔹 Silhouette score (cluster separation): {silhouette:.3f}")
 
-    return cluster_df
+    print("\ncluster_labels\n", cluster_df.head(5))
+
+    risk_table = compute_cluster_risk_scores(cluster_df, borrower_df)
+    print("\nrisk table:\n", risk_table)
+
+    risk_table = assign_risk_groups(risk_table, n_clusters=3)
+    print("\nrisk table:\n", risk_table)
+
+    cluster_to_risk = risk_table["risk_group"].to_dict()  # "cluster" is the index
+    print("\ncluster_to_risk:\n", cluster_to_risk)
+    cluster_df["risk_group"] = cluster_df["cluster_id"].map(cluster_to_risk)
+
+    print("\n", cluster_df, "\n")
+
+    borrower_df = pd.concat([borrower_df.reset_index(drop=True), cluster_df], axis=1)
+
+    return borrower_df
 
 
-def cluster_borrowers(x_latent, n_clusters):
+def cluster_borrowers_kmeans(borrower_df, x_latent, n_clusters):
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
     cluster_labels = kmeans.fit_predict(x_latent)
-    return cluster_labels
-
-
-def add_clusters_to_borrowers(df: pd.DataFrame, cluster_labels: np.ndarray):
-    df = df.copy()
-    df["cluster"] = cluster_labels
-    return df
+    borrower_df["cluster_id"] = cluster_labels
+    return borrower_df
 
 
 class Sampling(layers.Layer):
@@ -465,7 +502,7 @@ class VAELossLayer(layers.Layer):
       
     """
 
-    def __init__(self, beta=0.001, **kwargs):
+    def __init__(self, beta=8, **kwargs):
         # Calls the constructor of the parent class (tf.keras.Model) so internal Keras setup happens correctly.
         # Always do this when subclassing Keras models.
         super().__init__(**kwargs)
@@ -526,11 +563,11 @@ class FeatureWeightPrinter(tf.keras.callbacks.Callback):
         dense_layer = self.encoder_model.get_layer(self.dense_layer_name)
 
         # ---- 2. Extract its weights ----
-        W, b = dense_layer.get_weights()
+        w, b = dense_layer.get_weights()
         # W shape = (num_features, num_neurons)
 
         # ---- 3. Use the first neuron’s weight vector (vector of size num_features) ----
-        weight_vector = W[:, 0]
+        weight_vector = w[:, 0]
 
         # ---- 4. Pair feature names with their weights ----
         feature_weight_pairs = list(zip(self.feature_names, weight_vector))
@@ -542,6 +579,35 @@ class FeatureWeightPrinter(tf.keras.callbacks.Callback):
         print(f"\n=== Epoch {epoch + 1} — Top {self.top_k} Feature Weights ===")
         for name, weight in feature_weight_pairs[:self.top_k]:
             print(f"{name:30s} → {weight:+.4f}")
+
+
+def compute_cluster_risk_scores(cluster_df, borrower_df):
+    df = borrower_df.copy()
+    df["cluster"] = cluster_df["cluster_id"]
+
+    # Cluster-wise aggregation
+    risk_table = df.groupby("cluster").agg(
+        mean_cu=("credit_utilization", "mean"),
+        mean_dti=("debt_to_income", "mean"),
+        count=("cluster", "count")
+    )
+
+    # Risk score = weighted sum of CU + DTI
+    # (You can adjust weights if needed)
+    risk_table["risk_score"] = (
+            0.60 * risk_table["mean_cu"] +
+            0.40 * risk_table["mean_dti"]
+    )
+
+    return risk_table.sort_values("risk_score", ascending=False)
+
+
+def assign_risk_groups(risk_table, n_clusters):
+    risk_table_score = risk_table[['mean_cu', 'mean_dti', 'risk_score']]
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    cluster_labels = kmeans.fit_predict(risk_table_score)
+    risk_table["risk_group"] = cluster_labels
+    return risk_table
 
 
 if __name__ == "__main__":

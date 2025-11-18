@@ -7,7 +7,7 @@ glimpse(borrower)
 
 borrower_df <-
   borrower |>
-  mutate(cluster_n = paste0("cluster", "_", borrower$cluster_id))
+  mutate(cluster_n = paste0("cluster", "_", borrower$risk_group))
 
 borrower_df |>
   summarize(
