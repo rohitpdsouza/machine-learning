@@ -18,6 +18,7 @@ borrower_df |>
     .by = cluster_n
   )
 
+cred_util_dist <-
 ggplot(borrower_df, aes(x = cluster_n, y = credit_utilization)) +
   geom_boxplot(
     fill = "lightgreen",
@@ -33,13 +34,13 @@ ggplot(borrower_df, aes(x = cluster_n, y = credit_utilization)) +
   ) +
   labs(
     title = "Box plot",
-    subtitle = "distribution of credit_utilization",
-    x = "cluster_n",
-    y = "credit_utilization"
+    subtitle = "distribution of credit utilization by cluster",
+    x = "credit risk group",
+    y = "credit utilization"
   )
 
-
-ggplot(borrower_df, aes(x = cluster_n, y = debt_to_income)) +
+dti_dist <-
+  ggplot(borrower_df, aes(x = cluster_n, y = debt_to_income)) +
   geom_boxplot(
     fill = "lightgreen",
     color = "black",
@@ -54,12 +55,13 @@ ggplot(borrower_df, aes(x = cluster_n, y = debt_to_income)) +
   ) +
   labs(
     title = "Box plot",
-    subtitle = "distribution of debt_to_income",
-    x = "cluster_n",
-    y = "debt_to_income"
+    subtitle = "distribution of debt-to-income by cluster",
+    x = "credit risk group",
+    y = "debt-to-income"
   )
 
-ggplot(borrower_df, aes(x = cluster_n, y = loan_amount_outstanding)) +
+out_amt_dist <-
+  ggplot(borrower_df, aes(x = cluster_n, y = loan_amount_outstanding)) +
   geom_boxplot(
     fill = "lightgreen",
     color = "black",
@@ -74,7 +76,61 @@ ggplot(borrower_df, aes(x = cluster_n, y = loan_amount_outstanding)) +
   ) +
   labs(
     title = "Box plot",
-    subtitle = "distribution of loan_amount_oustanding_by_cluster",
-    x = "cluster_n",
-    y = "outstanding_loan_amount"
+    subtitle = "distribution of outstanding loan amount by cluster",
+    x = "credit risk group",
+    y = "outstanding loan amount"
   )
+
+income_vol_dist <-
+  ggplot(borrower_df, aes(x = cluster_n, y = income_volatility)) +
+  geom_boxplot(
+    fill = "lightgreen",
+    color = "black",
+    outlier.size = 3,
+    outlier.color = "red"
+  ) +
+  geom_jitter(
+    width = 0.3,
+    size = 1,
+    color = "orange",
+    alpha = 0.5
+  ) +
+  labs(
+    title = "Box plot",
+    subtitle = "distribution of income volatility by cluster",
+    x = "credit risk group",
+    y = "income volatility"
+  )
+
+
+ggsave(
+  "C:/Users/prohi/PycharmProjects/POC/ML/data/output/credit_utilization_dist.jpeg",
+  plot = cred_util_dist,
+  width = 6,
+  height = 4,
+  dpi = 300
+)
+
+ggsave(
+  "C:/Users/prohi/PycharmProjects/POC/ML/data/output/dti_dist.jpeg",
+  plot = dti_dist,
+  width = 6,
+  height = 4,
+  dpi = 300
+)
+
+ggsave(
+  "C:/Users/prohi/PycharmProjects/POC/ML/data/output/out_amt_dist.jpeg",
+  plot = out_amt_dist,
+  width = 6,
+  height = 4,
+  dpi = 300
+)
+
+ggsave(
+  "C:/Users/prohi/PycharmProjects/POC/ML/data/output/income_vol_dist.jpeg",
+  plot = income_vol_dist,
+  width = 6,
+  height = 4,
+  dpi = 300
+)

@@ -95,7 +95,7 @@ def main() -> None:
     encoder weights (which it used to compute z_mean, z_log_var, this will change the values in the next epoch)
     decoder weights (which improves reconstruction)
     """
-    epochs = 200
+    epochs = 500
     batch_size = 100
 
     feature_names = x_scaled_df.columns.tolist()
@@ -117,7 +117,10 @@ def main() -> None:
     # borrowers_with_clusters = cluster_borrowers_kmeans(borrower_df, z_mean, n_clusters=3)
 
     # Use Gaussiam Mixture Model (GMM) to cluster the borrowers
-    borrowers_with_clusters = cluster_borrowers_gmm(borrower_df, z_mean, n_clusters=10)
+    cluster_df = cluster_borrowers_gmm(borrower_df, z_mean, n_clusters=15)
+
+    # Next, reduce the 15 clusters into 3 risk clusters - high risk , medium risk and low risk by using domain knowledge
+    borrowers_with_risk_clusters = map_risk_group(borrower_df, cluster_df)
 
     # Use HDBSCAN to cluster the borrowers
     # borrowers_with_clusters = cluster_borrowers_hdbscan(borrower_df, z_mean)
@@ -128,8 +131,8 @@ def main() -> None:
     # -----------------------------------------------------------------
     # borrowers_with_clusters = add_clusters_to_borrowers(borrower_df, cluster_labels)
 
-    print("\nborrowers_with_clusters\n", borrowers_with_clusters.head(5))
-    borrowers_with_clusters.to_excel(
+    print("\nborrowers_with_risk_clusters\n", borrowers_with_risk_clusters.head(5))
+    borrowers_with_risk_clusters.to_excel(
         "data/output/borrowers_with_clusters_vae_2.xlsx",
         index=False,
         header=True,
@@ -384,24 +387,9 @@ def cluster_borrowers_gmm(
     print(f"✅ GMM found {len(np.unique(cluster_labels))} clusters.")
     print(f"📈 Average cluster confidence: {cluster_df['cluster_confidence'].mean():.3f}")
     print(f"🔹 Silhouette score (cluster separation): {silhouette:.3f}")
+    print("\ncluster_df\n", cluster_df.head(5))
 
-    print("\ncluster_labels\n", cluster_df.head(5))
-
-    risk_table = compute_cluster_risk_scores(cluster_df, borrower_df)
-    print("\nrisk table:\n", risk_table)
-
-    risk_table = assign_risk_groups(risk_table, n_clusters=3)
-    print("\nrisk table:\n", risk_table)
-
-    cluster_to_risk = risk_table["risk_group"].to_dict()  # "cluster" is the index
-    print("\ncluster_to_risk:\n", cluster_to_risk)
-    cluster_df["risk_group"] = cluster_df["cluster_id"].map(cluster_to_risk)
-
-    print("\n", cluster_df, "\n")
-
-    borrower_df = pd.concat([borrower_df.reset_index(drop=True), cluster_df], axis=1)
-
-    return borrower_df
+    return cluster_df
 
 
 def cluster_borrowers_kmeans(borrower_df, x_latent, n_clusters):
@@ -602,12 +590,35 @@ def compute_cluster_risk_scores(cluster_df, borrower_df):
     return risk_table.sort_values("risk_score", ascending=False)
 
 
-def assign_risk_groups(risk_table, n_clusters):
-    risk_table_score = risk_table[['mean_cu', 'mean_dti', 'risk_score']]
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    cluster_labels = kmeans.fit_predict(risk_table_score)
-    risk_table["risk_group"] = cluster_labels
+def assign_risk_groups(risk_table, n_risk_groups):
+    kmeans = KMeans(n_clusters=n_risk_groups, random_state=42, n_init=10)
+    cluster_labels = kmeans.fit_predict(risk_table[['mean_cu', 'mean_dti', 'risk_score']])
+    risk_table["risk_label"] = cluster_labels
+
+    # Map to High, Medium, Low instead of 0, 1 , 2
+    ordered_risk_labels = risk_table["risk_label"].drop_duplicates().tolist()
+    ordered_risk_groups = ["High", "Medium", "Low"]
+    label_to_group = {label: group for label, group in zip(ordered_risk_labels, ordered_risk_groups)}
+    risk_table["risk_group"] = risk_table["risk_label"].map(label_to_group)
+
     return risk_table
+
+
+def map_risk_group(borrower_df, cluster_df):
+    risk_table = compute_cluster_risk_scores(cluster_df, borrower_df)
+    print("\nrisk table:\n", risk_table)
+
+    risk_table = assign_risk_groups(risk_table, n_risk_groups=3)
+    print("\nrisk table:\n", risk_table)
+
+    cluster_to_risk = risk_table["risk_group"].to_dict()  # "cluster" is the index
+    print("\ncluster_to_risk:\n", cluster_to_risk)
+
+    cluster_df["risk_group"] = cluster_df["cluster_id"].map(cluster_to_risk)
+    print("\n", cluster_df, "\n")
+
+    borrower_df = pd.concat([borrower_df.reset_index(drop=True), cluster_df], axis=1)
+    return borrower_df
 
 
 if __name__ == "__main__":
