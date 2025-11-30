@@ -1,0 +1,53 @@
+Explanation & notes (line-by-line highlights)
+
+build_crnn():
+
+Uses small convolutional blocks with MaxPool2D to reduce spatial dims.
+
+Permute & Reshape turn the convolutional map into a time sequence across the width axis — this is the crucial step to convert a 2D map into a 1D sequence for RNN.
+
+Bidirectional(LSTM(..., return_sequences=True)) layers learn temporal dependencies (character adjacencies, kernel strokes) across the time steps.
+
+final Dense(num_classes, activation='softmax') produces character-class probabilities at each time-step.
+
+build_training_model():
+
+Adds labels, input_length, label_length inputs required by ctc_batch_cost.
+
+A Lambda layer computes the CTC loss per batch. The training model outputs the loss tensor itself (shape (batch, 1)), so we compile with a dummy loss that returns the predicted loss (pattern used by many Keras OCR examples).
+
+make_batch_from_paths():
+
+Loads images, encodes text labels using char_to_num, pads them, and computes input_length (the time steps network produces) and label_length. Feeding dummy y to fit() is required by Keras because it always expects y; our model internally computes the real loss.
+
+decode_predictions():
+
+Uses tf.keras.backend.ctc_decode which outputs decoded integer indices. The function then maps them back to characters.
+
+Practical recommendations for real training
+
+Dataset: Use a labeled CSV with image_path,label rows. Build a tf.data.Dataset that yields the 4-tuple of inputs. Use data augmentation (random distort, brightness, small rotation) for robustness.
+
+Image scaling & aspect ratio: Better approach: resize height to IMG_H, then scale width proportionally and pad to IMG_W (don’t squish characters). The simple resize(img_h, img_w) in the example is easiest but can reduce accuracy.
+
+Vocabulary: adjust CHARS to exactly the characters present in your texts (including uppercase/lowercase).
+
+Batching: For variable-width input, you can bucket by width and pad within buckets to reduce wasted computation.
+
+Training: Train 50–200 epochs, monitor validation CTC loss and optionally character error rate (CER) and word error rate (WER). Use EarlyStopping on validation CER.
+
+Decoding: Greedy decode (beam_width=1) is fast. For better accuracy, use beam search (beam_width=5) but it’s slower.
+
+Evaluation metrics: implement CER/WER to measure real performance, not just CTC loss.
+
+Transfer learning: If dataset is small, you can pretrain the CNN part or use pretrained text recognition weights.
+
+How to use your own dataset (quick guide)
+
+Prepare labels.csv with columns: image_path,label — absolute or relative paths.
+
+Write a tf.data generator that reads images, preprocesses via preprocess_image(), encodes labels and yields ({image_input, labels, input_length, label_length}, dummy_y).
+
+Call training_model.fit(dataset, epochs=..., callbacks=[...]).
+
+After training, save the base model crnn.save("ocr_crnn.h5") and use crnn.predict() + decode_predictions() for inference.

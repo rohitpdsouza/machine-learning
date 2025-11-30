@@ -1,0 +1,17 @@
+Step 5: Build CRNN model with CTC loss
+max_label_length = 20   # choose based on expected word length
+crnn_model = build_crnn_model(cnn_model, rnn_model, max_label_length)
+crnn_model.summary()
+
+Step 6: Train the CRNN model
+
+(You will need: labels, label_lengths, input_lengths)
+
+crnn_model.compile(optimizer="adam")
+crnn_model.fit(x=train_images, y=None, epochs=50)
+
+Step 7: Predict
+inference_model = build_inference_model(cnn_model, rnn_model)
+preds = inference_model.predict(test_img)
+decoded_text = ctc_decode(preds, char_list)
+print(decoded_text)
