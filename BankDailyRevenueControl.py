@@ -21,12 +21,6 @@ df["account_balance_usd"] = df.apply(
 )
 df["balance_type"] = df["account_balance_usd"].apply(lambda x: 1 if x > 0 else -1)
 
-# -----------------------------
-# Step 3: Split into revenue vs expense datasets
-# -----------------------------
-df_revenue = df[df["account_balance_usd"] < 0].copy()
-df_expense = df[df["account_balance_usd"] > 0].copy()
-
 # Features
 features = ["account_balance_usd", "client_rate", "days_in_year"]
 
@@ -40,6 +34,12 @@ learning_rate = 0.01
 
 # threshold parameter
 threshold = 2
+
+# -----------------------------
+# Step 3: Split into revenue vs expense datasets
+# -----------------------------
+df_revenue = df[df["account_balance_usd"] < 0].copy()
+df_expense = df[df["account_balance_usd"] > 0].copy()
 
 # -----------------------------
 # Step 4: Train revenue model
@@ -66,8 +66,6 @@ print(f"Revenue Model RMSE (scaled back): {rmse_rev:.6f}")
 
 df_revenue["predicted_interest_revenue_usd"] = model_rev.predict(X_rev) / SCALE
 df_revenue["deviation"] = df_revenue["interest_revenue_usd"] - df_revenue["predicted_interest_revenue_usd"]
-# df_revenue["pct_deviation"] = df_revenue["deviation"].abs() / df_revenue["interest_revenue_usd"].abs()
-# df_revenue["anomaly_flag"] = np.where(df_revenue["pct_deviation"] > 0.01, "YES", "NO")
 df_revenue["anomaly_flag"] = np.where(df_revenue["deviation"] > threshold, "YES", "NO")
 
 # -----------------------------
@@ -94,8 +92,6 @@ print(f"Expense Model RMSE: {rmse_exp:.6f}")
 
 df_expense["predicted_interest_expense_usd"] = model_exp.predict(X_exp) / SCALE
 df_expense["deviation"] = df_expense["interest_expense_usd"] - df_expense["predicted_interest_expense_usd"]
-# df_expense["pct_deviation"] = df_expense["deviation"].abs() / df_expense["interest_expense_usd"].abs()
-# df_expense["anomaly_flag"] = np.where(df_expense["pct_deviation"] > 0.01, "YES", "NO")
 df_expense["anomaly_flag"] = np.where(df_expense["deviation"].abs() > threshold, "YES", "NO")
 
 # -----------------------------
@@ -123,7 +119,7 @@ new_order = [
 # Reorder the DataFrame
 df_output = df_output[new_order]
 
-output_path = "data/output/bank_revenue_with_flags_separate_models.csv"
+output_path = "data/output/bank_revenue_anomaly_detection.csv"
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 df_output.to_csv(output_path, index=False)
 
