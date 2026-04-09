@@ -1,133 +1,254 @@
-import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from xgboost import XGBRegressor
+import pandas as pd
 from sklearn.metrics import mean_squared_error
-import os
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from xgboost import XGBRegressor
 
 # -----------------------------
-# Step 1: Load dataset
+# STEP 1: Load the dataset
 # -----------------------------
 
-# Read the input CSV file containing account balances, interest values, and other features
-df = pd.read_csv("data/input/bank_revenue.csv")
+# Set pandas display options to avoid truncation
+pd.set_option("display.max_columns", None)
+
+# Define the file path
+file_path = r"data\input\bank_revenue.csv"
+
+# Read the CSV file into a pandas DataFrame
+df = pd.read_csv(file_path)
 
 # -----------------------------
-# Step 2: Preprocessing
+# STEP 2: Pre Processing
 # -----------------------------
 
-# Define fixed FX rates to convert balances into USD
-fx_rates = {"USD": 1.0, "GBP": 1.25, "EUR": 1.1, "JPY": 0.0065}
+# Currency conversion: Define fixed FX rates to convert balances into USD. This is necessary because the dataset
+# contains account balances in multiple currencies, and we need a common currency (USD) for training the models
+# effectively.
+fx_rates = {
+    "EUR": 1.1,  # Euro to USD
+    "GBP": 1.25,  # British Pound to USD
+    "JPY": 0.0065,  # Japanese Yen to USD
+    "USD": 1.0  # US Dollar to USD
+}
 
-# Convert account balances into USD using FX rates
-df["account_balance_usd"] = df.apply(
-    lambda row: row["account_balance"] * fx_rates.get(row["account_currency"], 1.0),
-    axis=1
-)
+# Map the account_currency to fx_rates and create a new column for the FX rate
+df["fx_rate"] = df["account_currency"].map(fx_rates)
+# Create a new column for account_balance in USD by multiplying the original balance with the FX rate
+df["account_balance_usd"] = df["account_balance"] * df["fx_rate"]
+df.drop(columns=["fx_rate"], inplace=True)
 
-# Create balance_type: 1 for deposits (positive balances), -1 for overdrafts (negative balances)
-df["balance_type"] = df["account_balance_usd"].apply(lambda x: 1 if x > 0 else -1)
-
-# Define features used for training (balance_type excluded since models are trained separately)
-features = ["account_balance_usd", "client_rate", "days_in_year"]
-
-# Scaling factor to magnify very small interest values so the model can learn better
-SCALE = 1e6
-
-# Training parameters for XGBoost
-n_estimators = 10000
-max_depth = 10
-learning_rate = 0.01
-
-# Threshold for anomaly detection (absolute deviation > 2 USD is flagged)
-threshold = 2
-
-# -----------------------------
-# Step 3: Split into revenue vs expense datasets
-# -----------------------------
-
-# Revenue dataset: overdrafts (negative balances)
+# Split the data into two separate DataFrames: one for revenue (overdrafts) and one for expenses (deposits). This is
+# done to train the models separately for revenue and expense predictions, as they have different characteristics
 df_revenue = df[df["account_balance_usd"] < 0].copy()
-# Expense dataset: deposits (positive balances)
 df_expense = df[df["account_balance_usd"] > 0].copy()
 
+# Features used for training the models.
+features = ["account_balance_usd", "client_rate", "days_in_year"]
+
+# Scaling factor to magnify small interest values. Since the interest values can be very small (especially for
+# deposits), we multiply them by a large factor (1 million) to make them more learnable for the machine learning
+# model. This helps the model to capture patterns in the data more effectively.
+scale = 1e6
+
+# Training parameters for the XGBoost model. These parameters control the complexity and learning process of the model.
+param_grid = {
+    "n_estimators": [500, 1000, 2000, 5000, 10000],
+    "learning_rate": [0.01, 0.05, 0.1],
+    "max_depth": [4, 6, 8, 10],
+    "subsample": [0.5, 0.8, 0.9, 1.0],
+    "colsample_bytree": [0.8, 0.9, 1.0],
+    "min_child_weight": [1, 3, 5, 8],
+    "gamma": [0, 0.1, 0.2]
+}
+
+# Threshold for anomaly detection. After the model makes predictions, we will compare the predicted interest values
+# with the actual values. If the absolute deviation is greater than this threshold (2 USD), we will flag it as an
+# anomaly.
+threshold = 1.5
+# Percentage deviation threshold for larger values
+percentage_threshold = 0.05   # 10%
+
 # -----------------------------
-# Step 4: Train revenue model
+# Step 3: Train revenue model
 # -----------------------------
 
-# Features and scaled target for revenue
-X_rev = df_revenue[features]
-y_rev = df_revenue["interest_revenue_usd"] * SCALE  # scale target
+rev_features = df_revenue[features]
+rev_interest = df_revenue["interest_revenue_usd"] * scale
 
-# Train/test split
-X_train_rev, X_test_rev, y_train_rev, y_test_rev = train_test_split(X_rev, y_rev, test_size=0.2, random_state=42)
-
-# Define and train XGBoost regressor
-model_rev = XGBRegressor(
-    n_estimators=n_estimators,
-    learning_rate=learning_rate,
-    max_depth=max_depth,
-    subsample=0.9,
-    colsample_bytree=0.9,
+# Perform a 20% train-test split
+rev_train, rev_test, rev_interest_train, rev_interest_test = train_test_split(
+    rev_features,
+    rev_interest,
+    test_size=0.2,
     random_state=42
 )
-model_rev.fit(X_train_rev, y_train_rev)
 
-# Predict and scale back to USD
-y_pred_rev = model_rev.predict(X_test_rev) / SCALE  # scale back
+# Define the XGBoost regressor
 
-# Compute RMSE for model accuracy
-rmse_rev = np.sqrt(mean_squared_error(y_test_rev / SCALE, y_pred_rev))
-print(f"Revenue Model RMSE (scaled back): {rmse_rev:.6f}")
+# RandomizedSearchCV is a hyperparameter tuning technique in scikit‑learn that allows
+# you to search for the best combination of hyperparameters for a given model. It randomly samples a specified number
+# of combinations from a defined hyperparameter space and evaluates the model's performance using cross-validation.
+# This approach is more efficient than GridSearchCV when dealing with a large hyperparameter space, as it does not
+# exhaustively evaluate all possible combinations but still provides a good chance of finding an optimal set of
+# hyperparameters.
+grid_rev = RandomizedSearchCV(
+    estimator=XGBRegressor(random_state=42),
+    param_distributions=param_grid,
+    n_iter=20,
+    scoring="neg_mean_squared_error",
+    cv=3,
+    verbose=1,
+    n_jobs=-1
+)
 
-# Store predictions, compute deviation, and flag anomalies
-df_revenue["predicted_interest_revenue_usd"] = model_rev.predict(X_rev) / SCALE
-df_revenue["deviation"] = df_revenue["interest_revenue_usd"] - df_revenue["predicted_interest_revenue_usd"]
-df_revenue["anomaly_flag"] = np.where(df_revenue["deviation"] > threshold, "YES", "NO")
+# Runs the search and finds the best hyperparameter combination for the revenue model based on the negative mean
+# squared error (MSE) metric. The best estimator is then stored in model_rev, and the best parameters are printed to
+# the console. This process helps to optimize the performance of the revenue prediction model by finding the most
+# effective hyperparameters.
+grid_rev.fit(rev_train, rev_interest_train)
+model_rev = grid_rev.best_estimator_
+print("Best parameters for revenue model:", grid_rev.best_params_)
+
+# Train the model
+model_rev.fit(rev_train, rev_interest_train)
+
+# Predict the interest revenue on the test set and scale back to USD
+rev_interest_prediction = model_rev.predict(rev_test) / scale
+
+# Scale back actual
+rmse_revenue = np.sqrt(mean_squared_error(rev_interest_test / scale, rev_interest_prediction))
+
+# Compute the Root Mean Squared Error (RMSE) to evaluate the accuracy of the revenue model. RMSE is a common metric
+# for regression
+print("Revenue Model RMSE on Test Set: $", round(rmse_revenue, 2), "\n")
+
+# Predict interest revenue for the entire revenue dataset and scale back to USD
+df_revenue["predicted_interest_revenue_usd"] = model_rev.predict(rev_features) / scale
+
+# Compute the deviation between actual and predicted interest revenue, and flag anomalies where the absolute
+# deviation exceeds the threshold
+df_revenue["deviation"] = np.where(
+    df_revenue["interest_revenue_usd"].abs() <= 50,
+    df_revenue["interest_revenue_usd"] - df_revenue["predicted_interest_revenue_usd"],
+    np.nan   # leave blank for larger values
+)
+
+df_revenue["percentage_deviation"] = np.where(
+    df_revenue["interest_revenue_usd"].abs() > 50,
+    (df_revenue["interest_revenue_usd"] - df_revenue["predicted_interest_revenue_usd"]).abs() /
+    df_revenue["interest_revenue_usd"].abs(),
+    np.nan   # leave blank for smaller values
+)
+
+# Compute the percentage deviation to identify significant anomalies relative to the actual value. This is important
+# because an absolute deviation might be significant for small interest values but not for larger ones. By
+# calculating the percentage deviation, we can flag anomalies that are significant in relative terms, even if the
+# absolute deviation is small.
+df_revenue["anomaly_flag"] = np.where(
+    (df_revenue["interest_revenue_usd"].abs() <= 50) & (df_revenue["deviation"].abs() > threshold),
+    "YES",
+    np.where(
+        (df_revenue["interest_revenue_usd"].abs() > 50) &
+        (df_revenue["percentage_deviation"] > percentage_threshold),
+        "YES",
+        "NO"
+    )
+)
 
 # -----------------------------
-# Step 5: Train expense model
+# Step 4: Train expense model
 # -----------------------------
 
-# Features and scaled target for expense
-X_exp = df_expense[features]
-y_exp = df_expense["interest_expense_usd"] * SCALE  # scale target
+exp_features = df_expense[features]
+exp_interest = df_expense["interest_expense_usd"] * scale
 
-# Train/test split
-X_train_exp, X_test_exp, y_train_exp, y_test_exp = train_test_split(X_exp, y_exp, test_size=0.2, random_state=42)
-
-# Define and train XGBoost regressor
-model_exp = XGBRegressor(
-    n_estimators=n_estimators,
-    learning_rate=learning_rate,
-    max_depth=max_depth,
-    subsample=0.9,
-    colsample_bytree=0.9,
+# Perform a 20% train-test split
+exp_train, exp_test, exp_interest_train, exp_interest_test = train_test_split(
+    exp_features,
+    exp_interest,
+    test_size=0.2,
     random_state=42
 )
-model_exp.fit(X_train_exp, y_train_exp)
 
-# Predict and scale back to USD
-y_pred_exp = model_exp.predict(X_test_exp) / SCALE
+# Define the XGBoost regressor
+grid_exp = RandomizedSearchCV(
+    estimator=XGBRegressor(random_state=42),
+    param_distributions=param_grid,
+    n_iter=20,
+    scoring="neg_mean_squared_error",
+    cv=3,
+    verbose=1,
+    n_jobs=-1
+)
 
-# Compute RMSE for model accuracy
-rmse_exp = np.sqrt(mean_squared_error(y_test_exp / SCALE, y_pred_exp))
-print(f"Expense Model RMSE: {rmse_exp:.6f}")
+# Runs the search and finds the best hyperparameter combination for the expense model based on the negative mean
+grid_exp.fit(exp_train, exp_interest_train)
 
-# Store predictions, compute deviation, and flag anomalies
-df_expense["predicted_interest_expense_usd"] = model_exp.predict(X_exp) / SCALE
-df_expense["deviation"] = df_expense["interest_expense_usd"] - df_expense["predicted_interest_expense_usd"]
-df_expense["anomaly_flag"] = np.where(df_expense["deviation"].abs() > threshold, "YES", "NO")
+# The best estimator is then stored in model_exp, and the best parameters are printed to the console. This process
+# helps to optimize the performance of the expense prediction model by finding the most effective hyperparameters.
+model_exp = grid_exp.best_estimator_
+print("Best parameters for expense model:", grid_exp.best_params_)
+
+# Train the model
+model_exp.fit(exp_train, exp_interest_train)
+
+# Predict the interest expense on the test set and scale back to USD
+exp_interest_prediction = model_exp.predict(exp_test) / scale
+
+# Compute the Root Mean Squared Error (RMSE) to evaluate the accuracy of the expense model
+rmse_expense = np.sqrt(mean_squared_error(exp_interest_test / scale, exp_interest_prediction))
+print("Expense Model RMSE on Test Set: $", round(rmse_expense, 2), "\n")
+
+# Predict interest expense for the entire expense dataset and scale back to USD
+df_expense["predicted_interest_expense_usd"] = model_exp.predict(exp_features) / scale
+
+# Compute the deviation between actual and predicted interest expense, and flag anomalies where the absolute
+# deviation exceeds the threshold
+df_expense["deviation"] = np.where(
+    df_expense["interest_expense_usd"].abs() <= 50,
+    df_expense["interest_expense_usd"] - df_expense["predicted_interest_expense_usd"],
+    np.nan   # leave blank for larger values
+)
+
+df_expense["percentage_deviation"] = np.where(
+    df_expense["interest_expense_usd"].abs() > 50,
+    (df_expense["interest_expense_usd"] - df_expense["predicted_interest_expense_usd"]).abs() /
+    df_expense["interest_expense_usd"].abs(),
+    np.nan   # leave blank for smaller values
+)
+
+df_expense["anomaly_flag"] = np.where(
+    (df_expense["interest_expense_usd"].abs() <= 50) & (df_expense["deviation"].abs() > threshold),
+    "YES",
+    np.where(
+        (df_expense["interest_expense_usd"].abs() > 50) &
+        (df_expense["percentage_deviation"] > percentage_threshold),
+        "YES",
+        "NO"
+    )
+)
 
 # -----------------------------
-# Step 6: Combine and save output
+# Step 5: Combine and save output
 # -----------------------------
 
-# Combine revenue and expense results
+# Combine df_expense and df_revenue into a single DataFrame
 df_output = pd.concat([df_revenue, df_expense], axis=0)
 
-# Replace balance_type numeric values with descriptive labels
-df_output["balance_type"] = df_output["balance_type"].map({-1: "Overdraft", 1: "Deposit"})
+# Add balance_type attribute to df_output
+df_output["balance_type"] = np.where(df_output["account_balance"] > 0, "Deposit", "Overdraft")
+# Flip the sign of deviation to reflect where prediction is more or less
+df_output["deviation"] = np.where(
+    df_output["deviation"].notna(),
+    df_output["deviation"] * -1,
+    np.nan
+)
+
+df_output["percentage_deviation"] = np.where(
+    df_output["percentage_deviation"].notna(),
+    (df_output["percentage_deviation"] * 100).round(2),
+    np.nan
+)
 
 # Define the desired column order for readability
 new_order = [
@@ -144,14 +265,26 @@ new_order = [
     "predicted_interest_revenue_usd",
     "predicted_interest_expense_usd",
     "deviation",
+    "percentage_deviation",
     "anomaly_flag"
 ]
 df_output = df_output[new_order]
 
-# Save final output to CSV
-output_path = "data/output/bank_revenue_anomaly_detection.csv"
-os.makedirs(os.path.dirname(output_path), exist_ok=True)
-df_output.to_csv(output_path, index=False)
+# Print the count of each possible value of anomaly_flag
+print(df_output["anomaly_flag"].value_counts())
 
-print(f"Output saved to {output_path}")
-print(df_output.head())
+# Calculate and print the total sums
+total_interest_revenue_usd = df_output["interest_revenue_usd"].sum()
+total_interest_expense_usd = df_output["interest_expense_usd"].sum()
+total_predicted_interest_revenue_usd = df_output["predicted_interest_revenue_usd"].sum()
+total_predicted_interest_expense_usd = df_output["predicted_interest_expense_usd"].sum()
+
+print(f"\nTotal Actual Interest Revenue USD: {total_interest_revenue_usd}")
+print(f"Total Actual Interest Expense USD: {total_interest_expense_usd}")
+print(f"Total Predicted Interest Revenue USD: {total_predicted_interest_revenue_usd}")
+print(f"Total Predicted Interest Expense USD: {total_predicted_interest_expense_usd}")
+
+# Save the DataFrame to a CSV file (overwrites if the file already exists)
+output_path = "data/output/bank_revenue_anomaly_detection.csv"
+df_output.to_csv(output_path, index=False)
+print(f"DataFrame saved to {output_path}")
