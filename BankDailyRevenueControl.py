@@ -1,3 +1,9 @@
+# - Purpose: Automates detection of anomalies in bank revenue by training and applying ML models.
+# - Data flow: Preprocesses bank_revenue.csv, scales small interest values, and trains revenue and expense models.
+# - Output: Uses trained models to predict interest and flag anomalies, then writes results to a CSV for reporting.
+# - Business value: Enables automated monitoring of revenue anomalies.
+
+
 import numpy as np
 import pandas as pd
 import joblib
@@ -181,6 +187,7 @@ def training(df, scale):
 
 def load_model(model_path):
     model = joblib.load(model_path)
+    print(f"Model {model_path} loaded from the disk")
     return model
 
 
