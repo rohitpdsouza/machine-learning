@@ -112,12 +112,16 @@ def pre_process(file_path):
     # Currency conversion: Define fixed FX rates to convert balances into USD. This is necessary because the dataset
     # contains account balances in multiple currencies, and we need a common currency (USD) for training the models
     # effectively.
-    fx_rates = {
-        "EUR": 1.1,  # Euro to USD
-        "GBP": 1.25,  # British Pound to USD
-        "JPY": 0.0065,  # Japanese Yen to USD
-        "USD": 1.0  # US Dollar to USD
-    }
+    fx_rate_path = r"data\input\usd_exchange_rates.csv"
+    rates = pd.read_csv(
+        fx_rate_path,
+        usecols=["source_currency", "usd_exchange_rate"],
+        dtype={"source_currency": str, "usd_exchange_rate": float}
+    )
+    rates.dropna(subset=["source_currency", "usd_exchange_rate"])
+    # If duplicate currencies exist, keep the last occurrence
+    rates = rates.drop_duplicates(subset="source_currency", keep="last")
+    fx_rates = rates.set_index("source_currency")["usd_exchange_rate"].to_dict()
 
     # Map the account_currency to fx_rates and create a new column for the FX rate
     df["fx_rate"] = df["account_currency"].map(fx_rates)
