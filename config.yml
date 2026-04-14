@@ -1,3 +1,0 @@
-feature_flags:
-  TRAIN_REVENUE: false
-  TRAIN_EXPENSE: false
