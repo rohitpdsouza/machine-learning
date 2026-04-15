@@ -26,7 +26,7 @@ def main() -> None:
     # STEP 1: Pre Processing
     # -----------------------------
     # Define the revenue file path to be used for training the models
-    file_path = r"data/input/bank_revenue.csv"
+    file_path = r"data/input/bank_revenue_for_training.csv"
     # Load and pre-process the file into a dataframe
     df = pre_process(file_path)
 
@@ -49,7 +49,7 @@ def main() -> None:
     # -----------------------------
     # STEP 4: Predict the interest  and anomalies using the trained models
     # -----------------------------
-    file_path = r"data/input/bank_revenue.csv"
+    file_path = r"data/input/bank_revenue_for_prediction.csv"
     # Load and pre-process the file into a dataframe
     df = pre_process(file_path)
     df_predicted = prediction(df, scale, revenue_model, expense_model)
@@ -210,7 +210,7 @@ def prediction(df, scale, revenue_model, expense_model):
     # STEP 1: Predict the revenue
     # -----------------------------
     # Split the revenue
-    df_revenue = df[df["account_balance_usd"] < 0].copy()
+    df_revenue = df[df["account_balance_usd"] <= 0].copy()
 
     # Features used to predict by the model
     input_features = ["account_balance_usd", "client_rate", "days_in_year"]

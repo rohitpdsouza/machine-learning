@@ -9,7 +9,7 @@ os.chdir("C:/Users/prohi/PycharmProjects/POC/ML")
 # -----------------------------
 # Parameters
 # -----------------------------
-n_records = 100000
+n_records = 200000
 business_date = "20260406"  # same date for all records
 
 # Example FX rates (replace with actual if needed)
@@ -81,7 +81,7 @@ df = pd.DataFrame({
 # -----------------------------
 # Save to CSV
 # -----------------------------
-df.to_csv("data/input/bank_revenue.csv", index=False)
+df.to_csv("data/input/bank_revenue_for_prediction.csv", index=False)
 
 print("Synthetic dataset generated: bank_revenue.csv with", len(df), "records")
 print(df.head())
