@@ -3,6 +3,17 @@
 # - Output: Uses trained models to predict interest and flag anomalies, then writes results to a CSV for reporting.
 # - Business value: Enables automated monitoring of revenue anomalies.
 
+#
+# TODO: There can be interest adjustments posted in event of back-value dated balance adjustment entries or interest
+#  rate correction. For example, the accrual for a business day can be 1 USD but the adjustments made on that
+#  business day will recalculate the accrual for all days starting from the back-value date up to that business day.
+#  So the total accrual can be, say, 25 USD (1 USD today's accrual + 24 USD accrual adjustment). In such a case,
+#  this logic will flag 25 USD as an anomaly as the regression model will predict only a day's accrual, around 1 USD.
+#  To address such false anomalies, this logic should also check if the difference in the predicted and actual
+#  accrual can be explained by any "accrual adjustment" amounts. Differences that cannot be explained are the true
+#  anomalies and should be flagged as such.
+#
+
 import os
 import numpy as np
 import pandas as pd
